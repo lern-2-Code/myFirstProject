@@ -79,8 +79,38 @@ def convert_df_to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Transactions')
     return output.getvalue()
 
-# ----------------- APP INITIALIZATION -----------------
+# ----------------- APP CONFIGURATION & SECURITY GATE -----------------
 st.set_page_config(page_title="Personal Budget Tracker", page_icon="💰", layout="wide")
+
+def check_password():
+    """Returns True if the user has authenticated successfully."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+
+    if st.session_state.password_correct:
+        return True
+
+    # Render landing screen for locked portal
+    st.title("🔒 Secure Budget Portal")
+    user_password = st.text_input("Enter Access Password", type="password")
+    
+    if st.button("Unlock Dashboard"):
+        # 🟢 LOCAL TESTING PASSWORD (or use st.secrets["PASSWORD"] for safe deployments)
+        if user_password == "MySecretPassword123":
+            st.session_state.password_correct = True
+            st.rerun()
+        else:
+            st.error("❌ Invalid password. Access Denied.")
+            
+    return False
+
+# Strict stop if user has not cleared the portal security line
+if not check_password():
+    st.stop()
+
+# =========================================================================
+# 🔓 SECURE WORKSPACE AREA (Runs strictly *after* authentication verification)
+# =========================================================================
 st.title("💰 Personal Budget Tracker")
 
 df = load_data()
@@ -91,10 +121,10 @@ if updated:
 current_settings = load_settings()
 saved_budgets = current_settings.get("budgets", {cat: 0.0 for cat in BUDGET_CATEGORIES})
 
-# Multi-tab layout including the new Analytics component
+# Dashboard Container Tabs (Built safely post-login)
 tab_tracker, tab_analytics, tab_setup = st.tabs(["📊 Tracker & Reports", "📈 Interactive Analytics", "⚙️ System Setup"])
 
-# ----------------- SIDEBAR: ADD MANUAL ENTRY -----------------
+# ----------------- SIDEBAR CONTAINER: MANUAL ADD -----------------
 st.sidebar.header("Add Entry")
 with st.sidebar.form("entry_form", clear_on_submit=True):
     date = st.date_input("Date", datetime.today())
@@ -112,11 +142,12 @@ with st.sidebar.form("entry_form", clear_on_submit=True):
         st.sidebar.success("Entry added!")
         st.rerun()
 
-# ----------------- TAB 1: TRACKER & REPORTS -----------------
+# ----------------- TAB 1: TRACKER & REPORTS VIEW -----------------
 with tab_tracker:
     if df.empty:
-        st.info("No data available yet. Please add data using the sidebar form or setup panel.")
+        st.info("No data available yet. Please add data using the sidebar form or system setup panel.")
     else:
+        # Macro Core Balance Metrics
         total_income = df[df["Type"] == "Income"]["Amount"].sum()
         total_expense = df[df["Type"] == "Expense"]["Amount"].sum()
         net_balance = total_income - total_expense
@@ -137,6 +168,7 @@ with tab_tracker:
         
         cycle_df = df[(df["Type"] == "Expense") & (df["Date"] >= pd.Timestamp(current_cycle_start))]
         
+        # Aggregate any broken metric rules to display a unified tracking header warning
         overages = []
         for cat in BUDGET_CATEGORIES:
             spent = cycle_df[cycle_df["Category"] == cat]["Amount"].sum()
@@ -147,6 +179,7 @@ with tab_tracker:
         if overages:
             st.error(f"🚨 **Budget Alert!** You have exceeded your biweekly allowance limit in: {', '.join(overages)}")
 
+        # Construct Progress Grid
         prog_cols = st.columns(len(BUDGET_CATEGORIES))
         for idx, cat in enumerate(BUDGET_CATEGORIES):
             with prog_cols[idx]:
@@ -163,14 +196,15 @@ with tab_tracker:
                     st.caption("No cap set")
 
         st.markdown("---")
-        st.subheader("📋 Transaction History")
+        st.subheader("📋 Transaction History Ledger")
         
-        hist_col1, hist_col2 = st.columns([3, 1])
+        # Search & Document Processing Grid
+        hist_col1, hist_col2 = st.columns(2)
         with hist_col1:
             filter_type = st.selectbox("Filter History Table", ["All", "Income", "Expense"])
             filtered_df = df if filter_type == "All" else df[df["Type"] == filter_type]
         with hist_col2:
-            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True) # Structural break fix line
             excel_data = convert_df_to_excel(df)
             st.download_button(
                 label="📥 Export Ledger to Excel",
@@ -187,14 +221,13 @@ with tab_tracker:
             st.success("History wiped!")
             st.rerun()
 
-# ----------------- TAB 2: INTERACTIVE ANALYTICS -----------------
+# ----------------- TAB 2: INTERACTIVE ANALYTICS VIEW -----------------
 with tab_analytics:
     st.subheader("📈 Financial Intelligence & Performance Deep-Dive")
     
     if df.empty:
         st.info("Analytics engine is waiting for transaction data records.")
     else:
-        # Date filter controls
         st.write("#### 🔍 Filter Analysis Window")
         min_date = df["Date"].min().to_pydatetime()
         max_date = df["Date"].max().to_pydatetime()
@@ -202,36 +235,10 @@ with tab_analytics:
         if min_date == max_date:
             min_date = min_date - timedelta(days=1)
 
-        slider_col1, slider_col2 = st.columns([2, 1])
+        slider_col1, slider_col2 = st.columns(2)
         with slider_col1:
             selected_range = st.slider("Select Window Range", min_value=min_date, max_value=max_date, value=(min_date, max_date), format="YYYY-MM-DD")
         with slider_col2:
-            st.write("<br>", unsafe_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
             st.caption(f"Analyzing data from **{selected_range[0].strftime('%Y-%m-%d')}** to **{selected_range[1].strftime('%Y-%m-%d')}**")
 
-        # Filter the working analytical dataframe
-        adf = df[(df["Date"] >= pd.Timestamp(selected_range[0])) & (df["Date"] <= pd.Timestamp(selected_range[1]))]
-
-        if adf.empty:
-            st.warning("No entries match the chosen time configuration.")
-        else:
-            st.markdown("---")
-            
-            # Row 1: High Level Insights
-            an_col1, an_col2 = st.columns(2)
-            
-            with an_col1:
-                st.write("**Total Spending Footprint by Category**")
-                an_expense_df = adf[adf["Type"] == "Expense"]
-                if not an_expense_df.empty:
-                    category_totals = an_expense_df.groupby("Category")["Amount"].sum().reset_index()
-                    fig_bar = px.bar(category_totals.sort_values(by="Amount", ascending=True), 
-                                     x="Amount", y="Category", orientation='h', text_auto='.2f',
-                                     color="Amount", color_continuous_scale=px.colors.sequential.Teal)
-                    st.plotly_chart(fig_bar, use_container_width=True)
-                else:
-                    st.info("No expense indicators found inside this timeline window.")
-                    
-            with an_col2:
-                st.write("**Income vs. Expense Macro Proportion**")
-                type_totals = adf.groupby("Type")["Amount"].sum().reset_index()
