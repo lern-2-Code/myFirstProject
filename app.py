@@ -96,7 +96,7 @@ def check_password():
     
     if st.button("Unlock Dashboard"):
         # 🟢 LOCAL TESTING PASSWORD (or use st.secrets["PASSWORD"] for safe deployments)
-        if user_password == "MySecretPassword123":
+        if user_password == st.secrets["PASSWORD"]:
             st.session_state.password_correct = True
             st.rerun()
         else:
